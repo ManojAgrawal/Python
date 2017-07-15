@@ -368,7 +368,7 @@ Y_test[:10]
 # In[260]:
 
 accuracy_score(y_true = Y_test, y_pred = predictions)
-
+# 82.4%
 
 # Let us check XGBoost
 
@@ -377,7 +377,7 @@ accuracy_score(y_true = Y_test, y_pred = predictions)
 gbm = xgb.XGBClassifier(max_depth=10, n_estimators=300, learning_rate=0.001).fit(X_train, Y_train)
 predictions = gbm.predict(X_test)
 accuracy_score(y_true = Y_test, y_pred = predictions)
-
+# 84.4%
 
 # Logistic Rregression
 
@@ -387,7 +387,7 @@ logreg = LogisticRegression()
 logreg.fit(X_train, Y_train)
 predictions = logreg.predict(X_test)
 accuracy_score(y_true = Y_test, y_pred = predictions)
-
+# 77.2%
 
 # Random Forest
 
@@ -397,7 +397,7 @@ forest = RandomForestClassifier(criterion='entropy',n_estimators = 100, random_s
 forest.fit(X_train,Y_train)
 predictions = forest.predict(X_test)
 accuracy_score(y_true = Y_test, y_pred = predictions)
-
+# 83%
 
 # Support vector machine
 
@@ -407,7 +407,7 @@ svm_classifier = svm.SVC(kernel='rbf', random_state=0)
 svm_classifier.fit(X_train,Y_train)
 predictions = svm_classifier.predict(X_test)
 accuracy_score(y_true = Y_test, y_pred = predictions)
-
+# 78.3%
 
 # Let us check SVM with hyperparamter tunning
 
@@ -428,6 +428,6 @@ gs = GridSearchCV(estimator=pipe_svc,
 gs = gs.fit(X_train,Y_train)
 print(gs.best_score_)
 print(gs.best_params_)
+# 80.7% {'clf__C': 1, 'clf__gamma': 1, 'clf__kernel': 'rbf'}
 
-
-# Looks like XGboost has given the best results so far
+# Looks like XGboost has given the best results so far with 84.4% accuracy followed by RandomForest at 83%
