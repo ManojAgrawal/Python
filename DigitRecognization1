@@ -1,0 +1,160 @@
+
+# coding: utf-8
+
+# In[1]:
+
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+from sklearn.model_selection import train_test_split
+from sklearn.model_selection import StratifiedShuffleSplit
+from sklearn import svm
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.ensemble import BaggingClassifier
+from sklearn.tree import DecisionTreeClassifier
+from sklearn.preprocessing import StandardScaler
+import xgboost as xgb
+from xgboost.sklearn import XGBClassifier
+from sklearn.grid_search import GridSearchCV
+from sklearn.svm import SVC
+import tensorflow as tf
+get_ipython().magic('matplotlib inline')
+
+
+# In[13]:
+
+train = pd.read_csv("train.csv")
+test_df = pd.read_csv("test.csv")
+
+# Use 10000 records
+train_df = train.iloc[0:9999,:].copy()
+
+
+# In[14]:
+
+train_df.head()
+
+
+# In[15]:
+
+train_df.describe()
+
+
+# Check the distribution of labels to make sure they are evenly distributed
+
+# In[16]:
+
+train_df['label'].value_counts()
+
+
+# Split into features and labels
+
+# In[17]:
+
+X = train_df.iloc[:,:-1].copy()
+
+y = train_df.iloc[:,-1].copy()
+ 
+
+
+# Lets check one of the images
+
+# In[18]:
+
+img = np.array(X.iloc[1,:].values.reshape(28,28))
+
+
+# In[19]:
+
+plt.imshow(img,cmap='gray')
+
+
+# Split dataset into training and test set
+
+# In[20]:
+
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.33, random_state=324)
+
+
+# Standardize the features
+
+# In[21]:
+
+stdsc = StandardScaler()
+X_train_std = stdsc.fit_transform(X_train)
+X_test_std = stdsc.transform(X_test)
+
+
+# Let's try simple support vector machines without any tuning 
+
+# In[22]:
+
+svm_classifier = svm.SVC(kernel='rbf', random_state=0)
+svm_classifier.fit(X_train,y_train)
+svm_classifier.score(X_test,y_test)
+
+
+# Accuracy score 11% which is quite bad. Let us try again with Hyperparameter tuning 
+
+# In[29]:
+
+C_range = np.logspace(-2, 2, 3)
+gamma_range = np.logspace(-9, 3, 3)
+param_grid = dict(gamma=gamma_range, C=C_range)
+#cv = StratifiedShuffleSplit(n_splits=5, test_size=0.2, random_state=42)
+gs = GridSearchCV(SVC(),
+                 param_grid=param_grid,
+                 cv=10)
+gs = gs.fit(X_train,y_train)
+print(gs.best_score_)
+print(gs.best_params_)
+
+
+# Accuracy score 92.4% {'C': 100.0, 'gamma': 1.0000000000000001e-09}. Better but still not great. Let us try random forest.
+
+# In[30]:
+
+forest = RandomForestClassifier(criterion='entropy',n_estimators = 300, random_state = 1, n_jobs=2)
+forest.fit(X_train,y_train)
+forest.score(X_test,y_test)
+
+
+# Accuracy score 94.4%. Let us try bagging
+
+# In[25]:
+
+tree = DecisionTreeClassifier(criterion='entropy', max_depth=None)
+bag = BaggingClassifier(base_estimator=tree,n_estimators=500,max_samples=1.0,max_features=1.0,bootstrap=True,bootstrap_features=False,n_jobs=1, random_state=1)
+
+
+# In[26]:
+
+tree = tree.fit(X_train,y_train)
+#tree.score(X_test,y_test)
+bag = bag.fit(X_train,y_train)
+bag.score(X_test,y_test)
+
+
+# Worse than random forest. Lets try XGBoost
+
+# In[27]:
+
+gbm = xgb.XGBClassifier(max_depth=8, n_estimators=1000, learning_rate=0.02).fit(X_train, y_train)
+gbm.score(X_test,y_test)
+
+
+# Accuracy score 94.3% which is close to RandomForest. We can try hyperparameter tunning but I suspect this problem needs neaural networks. Let us just try simple DNN using TensorFlow
+# 
+
+# In[28]:
+
+feature_cols = tf.contrib.learn.infer_real_valued_columns_from_input(X_train_std)
+dnn_clf = tf.contrib.learn.DNNClassifier(hidden_units=[400,200,100],n_classes=10,feature_columns=feature_cols)
+dnn_clf = tf.contrib.learn.SKCompat(dnn_clf)
+dnn_clf.fit(X_train_std,y_train,batch_size=50,steps=40000)
+dnn_clf.score(X_test_std,y_test)
+
+
+# {'accuracy': 0.93939394, 'global_step': 40000, 'loss': 0.49126095}. Not any better. Looks like we will need to try CNN. I will try that in the separate piece of code.
+
+# https://www.kaggle.com/toregil/welcome-to-deep-learning-cnn-99
