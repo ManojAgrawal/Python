@@ -156,5 +156,3 @@ dnn_clf.score(X_test_std,y_test)
 
 
 # {'accuracy': 0.93939394, 'global_step': 40000, 'loss': 0.49126095}. Not any better. Looks like we will need to try CNN. I will try that in the separate piece of code.
-
-# https://www.kaggle.com/toregil/welcome-to-deep-learning-cnn-99
