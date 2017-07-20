@@ -214,7 +214,7 @@ test_pred = np.argmax(test_prob,axis=1)
 
 # In[55]:
 
-np.savetxt("C:/Users/Manoj/python scripts/digits/digits_submission2.csv",test_pred,delimiter=',')
+np.savetxt("digits_submission2.csv",test_pred,delimiter=',')
 
 
 # In[ ]:
