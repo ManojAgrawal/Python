@@ -1,0 +1,408 @@
+# In[1]:
+
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+get_ipython().magic('matplotlib inline')
+from sklearn.model_selection import StratifiedShuffleSplit
+from sklearn.model_selection import cross_val_score
+from sklearn.model_selection import GridSearchCV
+
+
+# In[2]:
+
+from sklearn.linear_model import LinearRegression
+from sklearn.metrics import mean_squared_error
+from xgboost.sklearn import XGBRegressor
+from sklearn.preprocessing import PolynomialFeatures, StandardScaler
+from sklearn.model_selection import train_test_split
+from sklearn.ensemble import GradientBoostingRegressor
+import xgboost as xgb
+from xgboost.sklearn import XGBClassifier
+from sklearn import cross_validation, metrics 
+from sklearn.preprocessing import LabelEncoder
+
+
+# In[3]:
+
+train_df = pd.read_csv("train.csv")
+test_df = pd.read_csv("test.csv")
+
+# save IDs from both sets and then drop them 
+train_Id = train_df['Id']
+test_Id = test_df['Id']
+
+train_df.drop(['Id'], axis = 1, inplace = True)
+test_df.drop(['Id'], axis = 1, inplace = True)
+
+
+# In[4]:
+
+train_df.head()
+
+
+# In[5]:
+
+train_df.info()
+
+
+# In[6]:
+
+test_df.info()
+
+
+# Change some field types
+
+# Utilities columns doesn't seem to provide any value so I am dropping it
+
+# In[7]:
+
+train_df.drop(['Utilities'], axis = 1, inplace = True)
+test_df.drop(['Utilities'], axis = 1, inplace = True)
+
+
+# In[8]:
+
+train_df['MSSubClass'] = train_df['MSSubClass'].astype('category')
+test_df['MSSubClass'] = test_df['MSSubClass'].astype('category')
+train_df['MoSold'] = train_df['MoSold'].astype('category')
+test_df['MoSold'] = test_df['MoSold'].astype('category')
+
+
+# Check the distribution of the numerical fields.
+
+# In[9]:
+
+train_df.hist(bins=50,figsize=(20,15))
+plt.show
+
+
+# Let us check the correlations with SalesPrice
+
+# In[10]:
+
+corr_matrix = train_df.corr()
+corr_matrix['SalePrice'].sort_values(ascending=False)
+
+
+# Let us try if we get better correlation with log transformation of target field
+
+# In[11]:
+
+train_df['SalePrice_log'] = np.log1p(train_df['SalePrice'])
+corr_matrix = train_df.corr()
+corr_matrix['SalePrice_log'].sort_values(ascending=False)
+
+
+# We do get better correlations. Let us look for outliers
+
+# In[12]:
+
+fig, ax = plt.subplots()
+ax.scatter(x=train_df['OverallQual'], y = train_df['SalePrice'])
+plt.show
+
+
+# There are two outliers that have overall quality 10 but price lower than 200000. Let us remove these from the training set
+
+# In[13]:
+
+#train_df = train_df.drop(train_df[(train_df['OverallQual'] == 10) & (train_df['SalePrice']) < 200000].index)
+train_df = train_df.drop(train_df[(train_df['OverallQual']== 10) & (train_df['SalePrice']<200000)].index)
+# Lets check with next attribute
+fig, ax = plt.subplots()
+ax.scatter(x=train_df['GrLivArea'], y = train_df['SalePrice'])
+plt.show
+
+
+# Let us fill the missing or not applicable values in Training and Test data.
+# First, we see that some MSZoning data is missing in Test set. Let us if there is some dependency on MSSubClass values 
+
+# In[14]:
+
+zone_counts = pd.crosstab(train_df.MSSubClass, train_df.MSZoning)
+zone_pcts = zone_counts.div(zone_counts.sum(1).astype(float), axis=0)
+zone_pcts.plot(kind='bar', stacked=True)
+
+
+# Seems there is some pattern. Let us fill the missing values with most common values group by MSSubClass
+
+# In[15]:
+
+mode = lambda x: x.mode()[0]
+freq_zone = train_df.groupby('MSSubClass')['MSZoning'].agg(mode).to_dict()
+test_df['MSZoning'] = test_df.MSZoning.fillna(test_df.MSSubClass.map(freq_zone))
+
+
+# Let us fill the missing lot frontage area values as median values grouped by Neighborhood. 
+
+# In[16]:
+
+# train_df.boxplot(column = 'LotFrontage', by = 'Neighborhood', figsize=(15,5))
+neigh_Lotfront = train_df.groupby('Neighborhood').LotFrontage.median().to_dict()
+
+train_df['LotFrontage'] = train_df.LotFrontage.fillna(train_df.Neighborhood.map(neigh_Lotfront))
+test_df['LotFrontage'] = test_df.LotFrontage.fillna(test_df.Neighborhood.map(neigh_Lotfront))
+
+
+# Missing Alley values mean 'no alley access'. Let us fill these with 'None' 
+
+# In[17]:
+
+train_df["Alley"] = train_df["Alley"].fillna("None")
+test_df["Alley"] = test_df["Alley"].fillna("None")
+
+
+# Using same reasoning as above let us fill the missing values of following columns with either 'None' or 'zeros'
+
+# In[18]:
+
+train_df.update(train_df[['MasVnrType','BsmtQual', 'BsmtCond','BsmtExposure', 'BsmtFinType1', 'BsmtFinType2', 
+                          'FireplaceQu', 'GarageType', 'GarageFinish','GarageQual', 'GarageCond','GarageYrBlt',
+                         'PoolQC','Fence','MiscFeature']].fillna("None"))
+test_df.update(test_df[['MasVnrType','BsmtQual', 'BsmtCond','BsmtExposure', 'BsmtFinType1', 'BsmtFinType2', 
+                          'FireplaceQu', 'GarageType', 'GarageFinish','GarageQual', 'GarageCond','GarageYrBlt',
+                         'PoolQC','Fence','MiscFeature']].fillna("None"))                
+
+               
+train_df.update(train_df[['MasVnrArea']].fillna(0))
+test_df.update(test_df[['MasVnrArea','BsmtFinSF1','BsmtFinSF2','BsmtUnfSF','TotalBsmtSF','BsmtFullBath','GarageYrBlt',
+                        'BsmtHalfBath', 'GarageCars', 'GarageArea']].fillna(0))
+                                
+
+
+# For few columns that still have missing values, let us use the most common value
+
+# In[19]:
+
+train_df['Electrical'] = train_df['Electrical'].fillna(train_df['Electrical'].mode()[0])
+test_df['KitchenQual'] = test_df['KitchenQual'].fillna(train_df['KitchenQual'].mode()[0])
+test_df['Exterior1st'] = test_df['Exterior1st'].fillna(train_df['Exterior1st'].mode()[0])
+test_df['Exterior2nd'] = test_df['Exterior2nd'].fillna(train_df['Exterior2nd'].mode()[0])
+test_df['SaleType'] = test_df['SaleType'].fillna(train_df['SaleType'].mode()[0])
+test_df['Functiol'] = test_df['Functiol'].fillna("Typ")
+
+
+# We do not have anymore missing or NAs in the datasets. Let us split the training set further into tranining and testing set to build the model. Lets straify by Overall Quality as sales price has the strongest correlation with that
+
+# We do not have anymore missing or NAs in the datasets. Let us convert some ordinal values to numeric
+
+# In[20]:
+
+qual_map = {'None': 0, 'Po': 1, 'Fa': 2, 'TA': 3, 'Gd': 4, 'Ex': 5}
+
+
+# In[21]:
+
+train_df['ExterQual'] = train_df['ExterQual'].map(qual_map)
+train_df['ExterCond'] = train_df['ExterCond'].map(qual_map)
+train_df['BsmtQual'] = train_df['BsmtQual'].map(qual_map)
+train_df['BsmtCond'] = train_df['BsmtCond'].map(qual_map)
+train_df['HeatingQC'] = train_df['HeatingQC'].map(qual_map)
+train_df['KitchenQual'] = train_df['KitchenQual'].map(qual_map)
+train_df['FireplaceQu'] = train_df['FireplaceQu'].map(qual_map)
+train_df['GarageQual'] = train_df['GarageQual'].map(qual_map)
+train_df['GarageCond'] = train_df['GarageCond'].map(qual_map)
+train_df['PoolQC'] = train_df['PoolQC'].map(qual_map)
+
+test_df['ExterQual'] = test_df['ExterQual'].map(qual_map)
+test_df['ExterCond'] = test_df['ExterCond'].map(qual_map)
+test_df['BsmtQual'] = test_df['BsmtQual'].map(qual_map)
+test_df['BsmtCond'] = test_df['BsmtCond'].map(qual_map)
+test_df['HeatingQC'] = test_df['HeatingQC'].map(qual_map)
+test_df['KitchenQual'] = test_df['KitchenQual'].map(qual_map)
+test_df['FireplaceQu'] = test_df['FireplaceQu'].map(qual_map)
+test_df['GarageQual'] = test_df['GarageQual'].map(qual_map)
+test_df['GarageCond'] = test_df['GarageCond'].map(qual_map)
+test_df['PoolQC'] = test_df['PoolQC'].map(qual_map)
+
+
+# In[22]:
+
+train_df = pd.get_dummies(train_df)
+test_df = pd.get_dummies(test_df)
+
+
+# Let us create the feature and target set from the traning set. Also use standardization
+
+# In[23]:
+
+X = train_df.drop(['SalePrice','SalePrice_log'], axis = 1).copy()
+y = train_df['SalePrice_log'].copy()
+
+
+# Let us compare train and test datsets for features
+
+# In[24]:
+
+print("training= ",X.shape)
+print("test= ",test_df.shape)
+
+
+# Looks like test has fewer columns than training. Let us use same features in training as there are in test. Let us first remove any extra features from the test set that are not in training set
+
+# In[25]:
+
+for i in test_df.columns:
+    if i not in train_df.columns:
+        test_df.drop(i, axis=1,inplace=True)
+
+
+# Now use only those features in the traninng set that exist in test set and then compare the both sets again
+
+# In[26]:
+
+features = test_df.columns
+X = X[features]
+print("training= ",X.shape)
+print("test= ",test_df.shape)
+
+
+# Now we have the same format for training and test set. let us use standard scaler on both set
+
+# In[27]:
+
+sc = StandardScaler()
+sc.fit(X)
+X_std = sc.transform(X)
+test_std = sc.transform(test_df)
+
+
+# Let us first use simple Linear Regressor on training set using cross validation
+
+# In[275]:
+
+lin_reg = LinearRegression()
+lin_reg.fit(X_std,y)
+scores = cross_val_score(lin_reg,X_std,y,scoring="neg_mean_squared_error", cv = 5)
+linreg_rmse_scores = np.sqrt(-scores)
+linreg_rmse_scores.mean()
+
+
+# Something not quite right with this model. let us try Gradient boosting
+
+# In[276]:
+
+GBoost = GradientBoostingRegressor(n_estimators=3000, learning_rate=0.02,
+                                   max_depth=8, max_features='sqrt',
+                                   min_samples_leaf=15, min_samples_split=10, 
+                                   loss='huber', random_state =5)
+
+GBoost.fit(X_std,y)
+scores = cross_val_score(GBoost,X_std,y,scoring="neg_mean_squared_error", cv = 5)
+GBoost_rmse_scores = np.sqrt(-scores)
+GBoost_rmse_scores.mean()
+
+
+# 0.11705724916028981: This is more like it. Let us try XGBoost using some default parameters
+
+# In[278]:
+
+model_xgb = xgb.XGBRegressor(colsample_bytree=1, gamma=0.0,objective='reg:linear', 
+                             learning_rate=0.3, max_depth=6, 
+                             min_child_weight=1, n_estimators=800,
+                             reg_alpha=0.0, reg_lambda=0,
+                             subsample=1,seed=42, silent=0)
+model_xgb.fit(X_std,y)
+scores = cross_val_score(model_xgb,X_std,y,scoring="neg_mean_squared_error", cv = 5)
+xgb_rmse_scores = np.sqrt(-scores)
+xgb_rmse_scores.mean()
+
+
+# 0.1315: Let us try tuning the parameter. Let us try learning rate and estimators first (I did couple of runs with different values and then narrowed the values to get to the following)
+
+# In[288]:
+
+params = {'learning_rate':[0.1],'n_estimators':[200,400]}
+xgb = XGBRegressor()              
+gsearch = GridSearchCV(xgb, params,cv=5,scoring='neg_mean_squared_error')
+gsearch.fit(X_std,y)
+gsearch.grid_scores_, gsearch.best_params_, gsearch.best_score_
+
+
+# {'learning_rate': 0.1, 'n_estimators': 400},,
+#  -0.013824101283815402): (rmse 0.1175) This is better. Let us min child weight and max depth now
+
+# In[292]:
+
+params = {'min_child_weight':[6,7,8], 'max_depth': [2,3,4],'learning_rate':[0.1],'n_estimators':[400]}
+xgb = XGBRegressor()              
+gsearch = GridSearchCV(xgb, params,cv=5,scoring='neg_mean_squared_error')
+gsearch.fit(X_std,y)
+gsearch.grid_scores_, gsearch.best_params_, gsearch.best_score_
+
+
+# {'learning_rate': 0.1,
+#   'max_depth': 3,
+#   'min_child_weight': 7,
+#   'n_estimators': 400},
+#  -0.013601760873414182)
+
+# In[293]:
+
+params = {'min_child_weight':[7], 'gamma':[i/10.0 for i in range(0,5)],'max_depth': [3],'learning_rate':[0.1],'n_estimators':[400]}
+xgb = XGBRegressor()              
+gsearch = GridSearchCV(xgb, params,cv=5,scoring='neg_mean_squared_error')
+gsearch.fit(X_std,y)
+gsearch.grid_scores_, gsearch.best_params_, gsearch.best_score_
+
+
+# {'gamma': 0.0,
+#   'learning_rate': 0.1,
+#   'max_depth': 3,
+#   'min_child_weight': 7,
+#   'n_estimators': 400},
+#  -0.013601760873414182) Now lets tune subsample and colsample_bytree. I started with [i/10.0 for i in range(1,10)] for both and then fine tuned it
+
+# In[33]:
+
+params = {'min_child_weight':[7], 'gamma':[0.0], 'max_depth': [3],'learning_rate':[0.1],'n_estimators':[400],'subsample':[0.75,0.8,0.85],
+ 'colsample_bytree':[0.45,0.5,0.55]}
+xgb = XGBRegressor()              
+gsearch = GridSearchCV(xgb, params,cv=5,scoring='neg_mean_squared_error')
+gsearch.fit(X_std,y)
+gsearch.grid_scores_, gsearch.best_params_, gsearch.best_score_
+
+
+# {'colsample_bytree': 0.5,'gamma': 0.0,'learning_rate': 0.1,'max_depth': 3,'min_child_weight': 7,'n_estimators': 400,'subsample': 0.8}, -0.013363093911314933) Now tune regularized parameters.
+
+# In[36]:
+
+params = {'min_child_weight':[7], 'gamma':[0.0], 'max_depth': [3],'learning_rate':[0.1],'n_estimators':[400],'subsample':[0.8],
+ 'colsample_bytree':[0.5],'reg_alpha':[0,0.00001,0.0001,0.001]}
+xgb = XGBRegressor()              
+gsearch = GridSearchCV(xgb, params,cv=5,scoring='neg_mean_squared_error')
+gsearch.fit(X_std,y)
+gsearch.grid_scores_, gsearch.best_params_, gsearch.best_score_
+
+
+# {'colsample_bytree': 0.5,
+#   'gamma': 0.0,
+#   'learning_rate': 0.1,
+#   'max_depth': 3,
+#   'min_child_weight': 7,
+#   'n_estimators': 400,
+#   'reg_alpha': 0.0001,
+#   'subsample': 0.8},
+#  -0.013338551390776764). lastly Let us try to reduce the learning rate and increase the estimators to see if that improves the model.
+
+# In[48]:
+
+params = {'min_child_weight':[7], 'gamma':[0.0], 'max_depth': [3],'learning_rate':[0.01],'n_estimators':[3350],'subsample':[0.8],'colsample_bytree':[0.5],'reg_alpha':[0.0001]}
+xgb = XGBRegressor()              
+gsearch = GridSearchCV(xgb, params,cv=5,scoring='neg_mean_squared_error')
+gsearch.fit(X_std,y)
+gsearch.grid_scores_, gsearch.best_params_, gsearch.best_score_
+
+
+# In[49]:
+
+final_model = gsearch.best_estimator_
+final_predictions = final_model.predict(test_std)
+final_predictions = np.expm1(final_predictions)
+final_predictions
+
+
+# In[69]:
+
+np.savetxt("submission.csv",final_predictions,delimiter=",")
