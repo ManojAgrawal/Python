@@ -1,0 +1,333 @@
+# In[1]:
+
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+get_ipython().magic('matplotlib inline')
+from sklearn.model_selection import StratifiedShuffleSplit
+from sklearn.model_selection import cross_val_score
+from sklearn.model_selection import GridSearchCV
+
+
+# In[45]:
+
+from sklearn.linear_model import LinearRegression, ElasticNet
+from sklearn.metrics import mean_squared_error
+from xgboost.sklearn import XGBRegressor
+from sklearn.preprocessing import PolynomialFeatures, StandardScaler
+from sklearn.model_selection import train_test_split
+from sklearn.ensemble import GradientBoostingRegressor
+import xgboost as xgb
+from xgboost.sklearn import XGBClassifier
+from sklearn import cross_validation, metrics 
+from sklearn.preprocessing import LabelEncoder
+from sklearn.ensemble import RandomForestRegressor
+
+
+# In[4]:
+
+train_df = pd.read_csv("train.csv")
+test_df = pd.read_csv("test.csv")
+
+# save IDs from both sets and then drop them 
+train_Id = train_df['Id']
+test_Id = test_df['Id']
+
+train_df.drop(['Id'], axis = 1, inplace = True)
+test_df.drop(['Id'], axis = 1, inplace = True)
+
+
+# In[5]:
+
+train_df.head()
+
+
+# In[6]:
+
+train_df.info()
+
+
+# In[7]:
+
+test_df.info()
+
+
+# Change some field types
+
+# Utilities columns doesn't seem to provide any value so I am dropping it
+
+# In[8]:
+
+train_df.drop(['Utilities'], axis = 1, inplace = True)
+test_df.drop(['Utilities'], axis = 1, inplace = True)
+
+
+# In[9]:
+
+train_df['MSSubClass'] = train_df['MSSubClass'].astype('category')
+test_df['MSSubClass'] = test_df['MSSubClass'].astype('category')
+train_df['MoSold'] = train_df['MoSold'].astype('category')
+test_df['MoSold'] = test_df['MoSold'].astype('category')
+
+
+# Check the distribution of the numerical fields.
+
+# In[10]:
+
+train_df.hist(bins=50,figsize=(20,15))
+plt.show
+
+
+# Let us check the correlations with SalesPrice
+
+# In[11]:
+
+corr_matrix = train_df.corr()
+corr_matrix['SalePrice'].sort_values(ascending=False)
+
+
+# Let us try if we get better correlation with log transformation of target field
+
+# In[12]:
+
+train_df['SalePrice_log'] = np.log1p(train_df['SalePrice'])
+corr_matrix = train_df.corr()
+corr_matrix['SalePrice_log'].sort_values(ascending=False)
+
+
+# We do get better correlations. Let us look for outliers
+
+# In[13]:
+
+fig, ax = plt.subplots()
+ax.scatter(x=train_df['OverallQual'], y = train_df['SalePrice'])
+plt.show
+
+
+# There are two outliers that have overall quality 10 but price lower than 200000. Let us remove these from the training set
+
+# In[14]:
+
+#train_df = train_df.drop(train_df[(train_df['OverallQual'] == 10) & (train_df['SalePrice']) < 200000].index)
+train_df = train_df.drop(train_df[(train_df['OverallQual']== 10) & (train_df['SalePrice']<200000)].index)
+# Lets check with next attribute
+fig, ax = plt.subplots()
+ax.scatter(x=train_df['GrLivArea'], y = train_df['SalePrice'])
+plt.show
+
+
+# Let us fill the missing or not applicable values in Training and Test data.
+# First, we see that some MSZoning data is missing in Test set. Let us if there is some dependency on MSSubClass values 
+
+# In[15]:
+
+zone_counts = pd.crosstab(train_df.MSSubClass, train_df.MSZoning)
+zone_pcts = zone_counts.div(zone_counts.sum(1).astype(float), axis=0)
+zone_pcts.plot(kind='bar', stacked=True)
+
+
+# Seems there is some pattern. Let us fill the missing values with most common values group by MSSubClass
+
+# In[16]:
+
+mode = lambda x: x.mode()[0]
+freq_zone = train_df.groupby('MSSubClass')['MSZoning'].agg(mode).to_dict()
+test_df['MSZoning'] = test_df.MSZoning.fillna(test_df.MSSubClass.map(freq_zone))
+
+
+# Let us fill the missing lot frontage area values as median values grouped by Neighborhood. 
+
+# In[17]:
+
+# train_df.boxplot(column = 'LotFrontage', by = 'Neighborhood', figsize=(15,5))
+neigh_Lotfront = train_df.groupby('Neighborhood').LotFrontage.median().to_dict()
+
+train_df['LotFrontage'] = train_df.LotFrontage.fillna(train_df.Neighborhood.map(neigh_Lotfront))
+test_df['LotFrontage'] = test_df.LotFrontage.fillna(test_df.Neighborhood.map(neigh_Lotfront))
+
+
+# Missing Alley values mean 'no alley access'. Let us fill these with 'None' 
+
+# In[18]:
+
+train_df["Alley"] = train_df["Alley"].fillna("None")
+test_df["Alley"] = test_df["Alley"].fillna("None")
+
+
+# Using same reasoning as above let us fill the missing values of following columns with either 'None' or 'zeros'
+
+# In[19]:
+
+train_df.update(train_df[['MasVnrType','BsmtQual', 'BsmtCond','BsmtExposure', 'BsmtFinType1', 'BsmtFinType2', 
+                          'FireplaceQu', 'GarageType', 'GarageFinish','GarageQual', 'GarageCond','GarageYrBlt',
+                         'PoolQC','Fence','MiscFeature']].fillna("None"))
+test_df.update(test_df[['MasVnrType','BsmtQual', 'BsmtCond','BsmtExposure', 'BsmtFinType1', 'BsmtFinType2', 
+                          'FireplaceQu', 'GarageType', 'GarageFinish','GarageQual', 'GarageCond','GarageYrBlt',
+                         'PoolQC','Fence','MiscFeature']].fillna("None"))                
+
+               
+train_df.update(train_df[['MasVnrArea']].fillna(0))
+test_df.update(test_df[['MasVnrArea','BsmtFinSF1','BsmtFinSF2','BsmtUnfSF','TotalBsmtSF','BsmtFullBath','GarageYrBlt',
+                        'BsmtHalfBath', 'GarageCars', 'GarageArea']].fillna(0))
+                                
+
+
+# For few columns that still have missing values, let us use the most common value
+
+# In[20]:
+
+train_df['Electrical'] = train_df['Electrical'].fillna(train_df['Electrical'].mode()[0])
+test_df['KitchenQual'] = test_df['KitchenQual'].fillna(train_df['KitchenQual'].mode()[0])
+test_df['Exterior1st'] = test_df['Exterior1st'].fillna(train_df['Exterior1st'].mode()[0])
+test_df['Exterior2nd'] = test_df['Exterior2nd'].fillna(train_df['Exterior2nd'].mode()[0])
+test_df['SaleType'] = test_df['SaleType'].fillna(train_df['SaleType'].mode()[0])
+test_df['Functiol'] = test_df['Functiol'].fillna("Typ")
+
+
+# We do not have anymore missing or NAs in the datasets. Let us convert some ordinal values to numeric
+
+# In[21]:
+
+qual_map = {'None': 0, 'Po': 1, 'Fa': 2, 'TA': 3, 'Gd': 4, 'Ex': 5}
+
+
+# In[22]:
+
+train_df['ExterQual'] = train_df['ExterQual'].map(qual_map)
+train_df['ExterCond'] = train_df['ExterCond'].map(qual_map)
+train_df['BsmtQual'] = train_df['BsmtQual'].map(qual_map)
+train_df['BsmtCond'] = train_df['BsmtCond'].map(qual_map)
+train_df['HeatingQC'] = train_df['HeatingQC'].map(qual_map)
+train_df['KitchenQual'] = train_df['KitchenQual'].map(qual_map)
+train_df['FireplaceQu'] = train_df['FireplaceQu'].map(qual_map)
+train_df['GarageQual'] = train_df['GarageQual'].map(qual_map)
+train_df['GarageCond'] = train_df['GarageCond'].map(qual_map)
+train_df['PoolQC'] = train_df['PoolQC'].map(qual_map)
+
+test_df['ExterQual'] = test_df['ExterQual'].map(qual_map)
+test_df['ExterCond'] = test_df['ExterCond'].map(qual_map)
+test_df['BsmtQual'] = test_df['BsmtQual'].map(qual_map)
+test_df['BsmtCond'] = test_df['BsmtCond'].map(qual_map)
+test_df['HeatingQC'] = test_df['HeatingQC'].map(qual_map)
+test_df['KitchenQual'] = test_df['KitchenQual'].map(qual_map)
+test_df['FireplaceQu'] = test_df['FireplaceQu'].map(qual_map)
+test_df['GarageQual'] = test_df['GarageQual'].map(qual_map)
+test_df['GarageCond'] = test_df['GarageCond'].map(qual_map)
+test_df['PoolQC'] = test_df['PoolQC'].map(qual_map)
+
+
+# In[23]:
+
+train_df = pd.get_dummies(train_df)
+test_df = pd.get_dummies(test_df)
+
+
+# Let us create the feature and target set from the traning set. Also use standardization
+
+# In[24]:
+
+X = train_df.drop(['SalePrice','SalePrice_log'], axis = 1).copy()
+y = train_df['SalePrice_log'].copy()
+
+
+# Let us compare train and test datsets for features
+
+# In[25]:
+
+print("training= ",X.shape)
+print("test= ",test_df.shape)
+
+
+# Looks like test has fewer columns than training. Let us use same features in training as there are in test. Let us first remove any extra features from the test set that are not in training set
+
+# In[26]:
+
+for i in test_df.columns:
+    if i not in train_df.columns:
+        test_df.drop(i, axis=1,inplace=True)
+
+
+# Now use only those features in the traninng set that exist in test set and then compare the both sets again
+
+# In[27]:
+
+features = test_df.columns
+X = X[features]
+print("training= ",X.shape)
+print("test= ",test_df.shape)
+
+
+# Now we have the same format for training and test set. let us use standard scaler on both set
+
+# In[28]:
+
+sc = StandardScaler()
+sc.fit(X)
+X_std = sc.transform(X)
+test_std = sc.transform(test_df)
+
+
+# Let us try Gradient boosting
+
+# In[29]:
+
+GBoost = GradientBoostingRegressor(n_estimators=3000, learning_rate=0.02,
+                                   max_depth=8, max_features='sqrt',
+                                   min_samples_leaf=15, min_samples_split=10, 
+                                   loss='huber', random_state =5)
+
+GBoost.fit(X_std,y)
+scores = cross_val_score(GBoost,X_std,y,scoring="neg_mean_squared_error", cv = 5)
+GBoost_rmse_scores = np.sqrt(-scores)
+GBoost_rmse_scores.mean()
+
+
+# 0.11705724916028981: Let us use XGBoost using parameters tuned previously in another excercise
+
+# In[33]:
+
+XGBoost = xgb.XGBRegressor(colsample_bytree=0.5, gamma=0.0, 
+                             learning_rate=0.01, max_depth=3, 
+                             min_child_weight=7, n_estimators=3350,
+                             reg_alpha=0.0001, reg_lambda=0.1,
+                             subsample=0.8,seed=42, silent=1)
+XGBoost.fit(X_std,y)
+scores = cross_val_score(XGBoost,X_std,y,scoring="neg_mean_squared_error", cv = 5)
+XGBoost_rmse_scores = np.sqrt(-scores)
+XGBoost_rmse_scores.mean()
+
+
+# In[51]:
+
+forest = RandomForestRegressor(n_estimators=500,criterion='mse',random_state=1,n_jobs=-1)
+
+forest.fit(X_std,y)
+scores = cross_val_score(forest,X_std,y,scoring="neg_mean_squared_error", cv = 5)
+forest_rmse_scores = np.sqrt(-scores)
+forest_rmse_scores.mean()
+
+
+# In[54]:
+
+elastic_net = ElasticNet(alpha=0.01, l1_ratio = 0.5) 
+elastic_net.fit(X_std,y)
+scores = cross_val_score(elastic_net,X_std,y,scoring="neg_mean_squared_error", cv = 5)
+elastic_rmse_scores = np.sqrt(-scores)
+elastic_rmse_scores.mean()
+
+
+# RandomForestRegressor is not giving great results. Let us average on GradientBoosting, XGBoosting and elastic net
+
+# In[55]:
+
+predict_gb = GBoost.predict(test_std)
+predict_xgb = XGBoost.predict(test_std)
+predict_en = elastic_net.predict(test_std)
+
+
+# In[62]:
+
+predict_stack = np.column_stack([predict_gb,predict_xgb,predict_en])
+predict_avg = np.mean(predict_stack, axis=1)
+predict_avg = np.expm1(predict_avg)
+np.savetxt("submission2.csv",predict_avg,delimiter=",")
